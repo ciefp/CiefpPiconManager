@@ -17,7 +17,7 @@ import re
 from .components.picon_manager import PiconManager
 
 # Plugin informacije
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 PLUGIN_NAME = "Ciefp Picon Manager"
 PLUGIN_AUTHOR = "Ciefp"
 
@@ -30,6 +30,9 @@ def log_debug(message):
             f.write(f"{message}\n")
     except:
         pass
+
+class CiefpPiconManagerMain(Screen):
+    """Glavni ekran za upravljanje piconima"""
 
 class CiefpPiconManagerMain(Screen):
     """Glavni ekran za upravljanje piconima"""
@@ -70,7 +73,7 @@ class CiefpPiconManagerMain(Screen):
     def __init__(self, session):
         Screen.__init__(self, session)
         self.session = session
-
+        
         # Inicijalizacija podataka
         self.bouquet_list_data = []
         self.channel_list_data = []
@@ -82,13 +85,15 @@ class CiefpPiconManagerMain(Screen):
         self.channel_service_refs = {}
         self.focus_panel = 0
         self.lamedb_data = {}
-
+        self.bouquet_index = 0
+        self.channel_index = 0
+        
         # Učitaj postavke
         self.load_settings()
-
+        
         # Kreiraj PiconManager instancu
         self.picon_manager = PiconManager(self.picon_path)
-
+        
         # Kreiraj widgete
         self["bouquet_list"] = MenuList([])
         self["channel_list"] = MenuList([])
@@ -105,14 +110,14 @@ class CiefpPiconManagerMain(Screen):
         self["separator1"] = Label()
         self["separator2"] = Label()
         self["separator3"] = Label()
-
+        
         # Dugmad kao Button widgeti
         self["key_red"] = Button("EXIT")
         self["key_green"] = Button("ASSIGN PICON")
         self["key_yellow"] = Button("SETTINGS")
         self["key_blue"] = Button("DELETE PICON")
-        self["key_menu"] = Button("MENU DOWNLOAD")
-
+        self["key_menu"] = Button("MENU")
+        
         # Akcije
         self["actions"] = ActionMap(
             ["OkCancelActions", "DirectionActions", "ColorActions", "MenuActions"],
@@ -131,68 +136,98 @@ class CiefpPiconManagerMain(Screen):
             },
             -1
         )
-
+        
         # Inicijaliziraj podatke
         self.onLayoutFinish.append(self.init_data)
-
+    
     def load_settings(self):
         """Učitaj postavke iz configa"""
         try:
             if not hasattr(config.plugins, "ciefp_picon_manager"):
                 config.plugins.ciefp_picon_manager = ConfigSubsection()
-                # Default putanja je /picon/
-                config.plugins.ciefp_picon_manager.picon_path = ConfigText(default="/picon/")
-
+                config.plugins.ciefp_picon_manager.picon_path = ConfigText(default="/media/usb/picon/")
+            
             if hasattr(config.plugins.ciefp_picon_manager, "picon_path"):
                 self.picon_path = config.plugins.ciefp_picon_manager.picon_path.value
                 if not os.path.exists(self.picon_path):
-                    self.picon_path = "/picon/"
-                    # Kreiraj /picon/ ako ne postoji
-                    if not os.path.exists("/picon/"):
-                        try:
-                            os.makedirs("/picon/")
-                        except:
-                            pass
+                    self.picon_path = "/media/usb/picon/"
         except Exception as e:
             log_debug(f"Error loading settings: {e}")
-
+    
     def init_data(self):
         """Inicijaliziraj podatke"""
-        self["status_label"].setText("Loading data...")
-        self.load_lamedb()
-        self.load_bouquets()
-        self.update_display()
-
+        try:
+            self["status_label"].setText("Loading data...")
+            self.load_lamedb()
+            self.load_bouquets()
+            self.update_display()
+        except Exception as e:
+            log_debug(f"Init data error: {e}")
+            self["status_label"].setText(f"Error loading data: {str(e)[:50]}")
+    
+    def safe_read_file(self, filepath):
+        """Sigurno čitanje fajla sa UTF-8 encoding zaštitom"""
+        try:
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.read()
+        except:
+            try:
+                with open(filepath, 'r', encoding='latin-1', errors='ignore') as f:
+                    return f.read()
+            except:
+                try:
+                    with open(filepath, 'r', errors='ignore') as f:
+                        return f.read()
+                except:
+                    return ""
+    
+    def safe_read_lines(self, filepath):
+        """Sigurno čitanje linija fajla sa UTF-8 encoding zaštitom"""
+        try:
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.readlines()
+        except:
+            try:
+                with open(filepath, 'r', encoding='latin-1', errors='ignore') as f:
+                    return f.readlines()
+            except:
+                try:
+                    with open(filepath, 'r', errors='ignore') as f:
+                        return f.readlines()
+                except:
+                    return []
+    
     def load_lamedb(self):
         """Učitaj lamedb podatke za imena kanala"""
         self.lamedb_data = {}
         lamedb_path = "/etc/enigma2/lamedb"
         if not os.path.exists(lamedb_path):
             return
-
+        
         try:
-            with open(lamedb_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-
+            content = self.safe_read_file(lamedb_path)
+            if not content:
+                return
+            
             start = content.find("\nservices\n")
             end = content.find("\nend\n", start)
             if start == -1 or end == -1:
                 return
-
+            
             services_block = content[start + 10:end]
             lines = services_block.splitlines()
-
+            
             i = 0
             while i < len(lines):
                 line = lines[i].strip()
                 if not line:
                     i += 1
                     continue
-
+                
                 if line.startswith("p:") or line.startswith("c:"):
                     i += 1
                     continue
-
+                
                 if ":" in line:
                     parts = line.split(":")
                     if len(parts) >= 4:
@@ -200,16 +235,16 @@ class CiefpPiconManagerMain(Screen):
                         satfreq = parts[1].lower()
                         tsid = parts[2].lower()
                         onid = parts[3].lower()
-
+                        
                         key1 = f"{sid}:{satfreq}:{tsid}:{onid}"
                         key2 = f"{sid}:{satfreq.zfill(8)}:{tsid}:{onid}"
-
+                        
                         if i + 1 < len(lines):
                             name = lines[i + 1].strip()
                             if name and not name.startswith("p:") and not name.startswith("c:"):
                                 self.lamedb_data[key1] = name
                                 self.lamedb_data[key2] = name
-
+                                
                                 try:
                                     sid_hex = f"{int(sid, 16):04x}"
                                     tsid_hex = f"{int(tsid, 16):04x}"
@@ -218,12 +253,12 @@ class CiefpPiconManagerMain(Screen):
                                     self.lamedb_data[key3] = name
                                 except:
                                     pass
-
+                
                 i += 1
-
+                
         except Exception as e:
             log_debug(f"Error parsing lamedb: {e}")
-
+    
     def load_bouquets(self):
         """Učitaj sve bukete"""
         try:
@@ -231,23 +266,36 @@ class CiefpPiconManagerMain(Screen):
             if not os.path.exists(bouquets_file):
                 self["status_label"].setText("No bouquets found")
                 return
-
+            
             bouquet_files = []
-            with open(bouquets_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if "FROM BOUQUET" in line:
-                        start = line.find('"') + 1
-                        end = line.find('"', start)
-                        if start != -1 and end != -1:
-                            bouquet_files.append(line[start:end])
-
+            try:
+                with open(bouquets_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line in f:
+                        if "FROM BOUQUET" in line:
+                            start = line.find('"') + 1
+                            end = line.find('"', start)
+                            if start != -1 and end != -1:
+                                bouquet_files.append(line[start:end])
+            except:
+                try:
+                    with open(bouquets_file, 'r', encoding='latin-1', errors='ignore') as f:
+                        for line in f:
+                            if "FROM BOUQUET" in line:
+                                start = line.find('"') + 1
+                                end = line.find('"', start)
+                                if start != -1 and end != -1:
+                                    bouquet_files.append(line[start:end])
+                except:
+                    pass
+            
             self.bouquet_list_data = []
             for bouquet_file in bouquet_files:
                 file_path = os.path.join("/etc/enigma2", bouquet_file)
                 if os.path.exists(file_path):
                     try:
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            first_line = f.readline().strip()
+                        lines = self.safe_read_lines(file_path)
+                        if lines:
+                            first_line = lines[0].strip() if lines else ""
                             if first_line.startswith("#NAME"):
                                 display_name = first_line.replace("#NAME", "", 1).strip()
                                 self.bouquet_list_data.append({
@@ -256,109 +304,96 @@ class CiefpPiconManagerMain(Screen):
                                 })
                     except Exception as e:
                         log_debug(f"Error reading bouquet {bouquet_file}: {e}")
-
+            
             if self.bouquet_list_data:
                 self.current_bouquet = self.bouquet_list_data[0]
                 self.current_bouquet_file = self.bouquet_list_data[0]['file']
                 self.load_channels_from_bouquet()
-
+            
             self["status_label"].setText(f"Loaded {len(self.bouquet_list_data)} bouquets")
-
+            
         except Exception as e:
             log_debug(f"Error loading bouquets: {e}")
             self["status_label"].setText(f"Error: {e}")
-
+    
     def load_channels_from_bouquet(self):
         """Učitaj kanale iz selektovanog buketa"""
         if not self.current_bouquet or not self.current_bouquet_file:
             return
-
+        
         try:
             file_path = os.path.join("/etc/enigma2", self.current_bouquet_file)
             if not os.path.exists(file_path):
                 return
-
+            
             self.channel_list_data = []
             self.channel_refs = {}
             self.channel_service_refs = {}
-
-            with open(file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-
+            
+            lines = self.safe_read_lines(file_path)
+            if not lines:
+                return
+            
             i = 0
             while i < len(lines):
                 line = lines[i].strip()
                 if not line:
                     i += 1
                     continue
-
+                
                 if line.startswith("#NAME"):
                     i += 1
                     continue
-
+                
                 elif line.startswith("#SERVICE"):
                     service_ref = line.replace("#SERVICE", "").strip()
-
+                    
                     # Provjeri da li je marker (1:64)
                     if service_ref.startswith("1:64:"):
-                        # Ovo je marker - pokušaj dobiti ime iz #DESCRIPTION
                         marker_name = None
-                        # Provjeri da li sljedeći red ima #DESCRIPTION
                         if i + 1 < len(lines) and lines[i + 1].strip().startswith("#DESCRIPTION"):
                             desc_line = lines[i + 1].strip()
-                            # Ukloni #DESCRIPTION ali NE ČISTI ime
                             marker_name = desc_line.replace("#DESCRIPTION", "").strip()
-                            i += 1  # Preskoči #DESCRIPTION red
-
-                        # Ako nema #DESCRIPTION, preskoči marker
-                        if not marker_name:
                             i += 1
-                            continue
-
-                        # Dodaj marker TAČNO ONO KAKO JE U DESCRIPTION (bez čišćenja)
-                        self.channel_list_data.append(marker_name)
-                        self.channel_refs[marker_name] = service_ref
-                        self.channel_service_refs[marker_name] = service_ref
+                        
+                        if marker_name:
+                            self.channel_list_data.append(marker_name)
+                            self.channel_refs[marker_name] = service_ref
+                            self.channel_service_refs[marker_name] = service_ref
                         i += 1
                         continue
-
-                    # Ako nije marker, parsiraj kao običan kanal
+                    
                     channel_name = self.get_channel_name(service_ref)
-
+                    
                     if channel_name:
                         self.channel_list_data.append(channel_name)
                         self.channel_refs[channel_name] = service_ref
                         self.channel_service_refs[channel_name] = service_ref
-                    else:
-                        # Ako ne možemo dobiti ime, dodaj Unknown ali sa service ref
-                        self.channel_list_data.append(f"Unknown ({service_ref[:20]}...)")
-                        self.channel_refs[f"Unknown ({service_ref[:20]}...)"] = service_ref
-
+                    
                     i += 1
-
+                
                 elif line.startswith("#DESCRIPTION"):
-                    # Ako dođemo do #DESCRIPTION bez prethodnog #SERVICE (rijetko)
                     marker_name = line.replace("#DESCRIPTION", "").strip()
                     if marker_name:
-                        # Dodaj marker TAČNO ONO KAKO JE U DESCRIPTION (bez čišćenja)
                         self.channel_list_data.append(marker_name)
                         self.channel_refs[marker_name] = "#SERVICE 1:64:0:0:0:0:0:0:0:0:"
                         self.channel_service_refs[marker_name] = "#SERVICE 1:64:0:0:0:0:0:0:0:0:"
                     i += 1
-
+                
                 else:
                     i += 1
-
+            
             if self.channel_list_data:
                 self.current_channel = self.channel_list_data[0]
+                self.channel_index = 0
                 self.update_channel_info()
                 self.refresh_picon()
-
+            
             self.update_display()
-
+            
         except Exception as e:
             log_debug(f"Error loading channels: {e}")
-
+    
     def get_channel_name(self, service_ref):
         """Dohvati ime kanala iz service reference"""
         try:
@@ -367,19 +402,19 @@ class CiefpPiconManagerMain(Screen):
                 if len(parts) >= 11 and parts[10]:
                     return f"{parts[10]} (IPTV)"
                 return "IPTV Channel"
-
+            
             parts = service_ref.split(":")
             if len(parts) >= 10:
                 sid = parts[3].lower()
                 tsid = parts[4].lower()
                 onid = parts[5].lower()
                 satfreq = parts[6].lower()
-
+                
                 keys = [
                     f"{sid}:{satfreq}:{tsid}:{onid}",
                     f"{sid}:{satfreq.zfill(8)}:{tsid}:{onid}"
                 ]
-
+                
                 try:
                     sid_hex = f"{int(sid, 16):04x}"
                     tsid_hex = f"{int(tsid, 16):04x}"
@@ -388,45 +423,49 @@ class CiefpPiconManagerMain(Screen):
                     keys.append(f"{sid_hex}:{satfreq.zfill(8)}:{tsid_hex}:{onid_hex}")
                 except:
                     pass
-
+                
                 for key in keys:
                     if key in self.lamedb_data:
                         return self.lamedb_data[key]
-
+                
                 return f"Unknown ({sid}:{tsid}:{onid})"
-
+            
             return "Unknown Channel"
-
+            
         except Exception as e:
             log_debug(f"Error getting channel name: {e}")
             return "Unknown Channel"
-
+    
     def update_display(self):
-        """Ažuriraj prikaz listi"""
+        """Ažuriraj prikaz listi - ponovnim setList-om"""
         bouquet_items = []
         if self.bouquet_list_data:
             for bouquet in self.bouquet_list_data:
                 bouquet_items.append(bouquet['name'])
-
+        
         self["bouquet_list"].setList(bouquet_items)
-
+        
         if self.current_bouquet and self.current_bouquet['name'] in bouquet_items:
             index = bouquet_items.index(self.current_bouquet['name'])
+            self.bouquet_index = index
             self["bouquet_list"].index = index
-            self["bouquet_list"].setCurrentIndex(index)
-
+            # Označi selektirani item tako što se pomaknemo na njega
+            self["bouquet_list"].moveToIndex(index)
+        
         channel_items = []
         if self.channel_list_data:
             for channel in self.channel_list_data:
                 channel_items.append(channel)
-
+        
         self["channel_list"].setList(channel_items)
-
+        
         if self.current_channel and self.current_channel in channel_items:
             index = channel_items.index(self.current_channel)
+            self.channel_index = index
             self["channel_list"].index = index
-            self["channel_list"].setCurrentIndex(index)
-
+            # Označi selektirani item tako što se pomaknemo na njega
+            self["channel_list"].moveToIndex(index)
+    
     def update_channel_info(self):
         """Ažuriraj info o kanalu"""
         if self.current_channel:
@@ -450,7 +489,7 @@ class CiefpPiconManagerMain(Screen):
             self["status_label"].setText("No service reference")
             return
 
-        # Ignoriši markere (1:64) - oni nemaju pikone
+        # Ignoriši markere (1:64)
         if service_ref.startswith("#SERVICE 1:64:") or "1:64:" in service_ref:
             self["picon"].setPixmap(None)
             self["status_label"].setText("")
@@ -481,22 +520,23 @@ class CiefpPiconManagerMain(Screen):
         self.focus_panel = 0
         self["status_label"].setText("Focus: Bouquets")
         self.update_display()
-
+    
     def focus_right(self):
         self.focus_panel = 1
         self["status_label"].setText("Focus: Channels")
         self.update_display()
-
+    
     def move_up(self):
         if self.focus_panel == 0:
             if self.bouquet_list_data:
-                current_idx = self["bouquet_list"].index
+                current_idx = self.bouquet_index
                 if current_idx > 0:
                     new_idx = current_idx - 1
                 else:
-                    new_idx = 0  # Ne dozvoli wrap-around
+                    new_idx = 0
+                self.bouquet_index = new_idx
                 self["bouquet_list"].index = new_idx
-                self["bouquet_list"].setCurrentIndex(new_idx)
+                self["bouquet_list"].moveToIndex(new_idx)  # Pomjeri selekcionu traku
                 self.current_bouquet = self.bouquet_list_data[new_idx]
                 self.current_bouquet_file = self.current_bouquet['file']
                 self.load_channels_from_bouquet()
@@ -504,26 +544,30 @@ class CiefpPiconManagerMain(Screen):
 
         elif self.focus_panel == 1:
             if self.channel_list_data:
-                # MenuList.up() pomera selekciju i viewport zajedno.
-                # Ne osvežavaj celu listu ovde jer setList() može da resetuje
-                # interno stanje skrolovanja.
-                self["channel_list"].up()
-                current_idx = self["channel_list"].index
-                self.current_channel = self.channel_list_data[current_idx]
+                current_idx = self.channel_index
+                if current_idx > 0:
+                    new_idx = current_idx - 1
+                else:
+                    new_idx = 0
+                self.channel_index = new_idx
+                self["channel_list"].index = new_idx
+                self["channel_list"].moveToIndex(new_idx)  # Pomjeri selekcionu traku
+                self.current_channel = self.channel_list_data[new_idx]
                 self.update_channel_info()
                 self.refresh_picon()
 
     def move_down(self):
         if self.focus_panel == 0:
             if self.bouquet_list_data:
-                current_idx = self["bouquet_list"].index
+                current_idx = self.bouquet_index
                 max_idx = len(self.bouquet_list_data) - 1
                 if current_idx < max_idx:
                     new_idx = current_idx + 1
                 else:
-                    new_idx = max_idx  # Ne dozvoli wrap-around
+                    new_idx = max_idx
+                self.bouquet_index = new_idx
                 self["bouquet_list"].index = new_idx
-                self["bouquet_list"].setCurrentIndex(new_idx)
+                self["bouquet_list"].moveToIndex(new_idx)  # Pomjeri selekcionu traku
                 self.current_bouquet = self.bouquet_list_data[new_idx]
                 self.current_bouquet_file = self.current_bouquet['file']
                 self.load_channels_from_bouquet()
@@ -531,11 +575,16 @@ class CiefpPiconManagerMain(Screen):
 
         elif self.focus_panel == 1:
             if self.channel_list_data:
-                # MenuList.down() pomera selekciju i viewport zajedno,
-                # pa lista može normalno da skroluje do poslednjeg kanala.
-                self["channel_list"].down()
-                current_idx = self["channel_list"].index
-                self.current_channel = self.channel_list_data[current_idx]
+                current_idx = self.channel_index
+                max_idx = len(self.channel_list_data) - 1
+                if current_idx < max_idx:
+                    new_idx = current_idx + 1
+                else:
+                    new_idx = max_idx
+                self.channel_index = new_idx
+                self["channel_list"].index = new_idx
+                self["channel_list"].moveToIndex(new_idx)  # Pomjeri selekcionu traku
+                self.current_channel = self.channel_list_data[new_idx]
                 self.update_channel_info()
                 self.refresh_picon()
 
@@ -547,6 +596,9 @@ class CiefpPiconManagerMain(Screen):
                 self["status_label"].setText(f"Bouquet: {self.current_bouquet['name']}")
                 if self.channel_list_data:
                     self.current_channel = self.channel_list_data[0]
+                    self.channel_index = 0
+                    self["channel_list"].index = 0
+                    self["channel_list"].moveToIndex(0)
                     self.update_channel_info()
                     self.refresh_picon()
         elif self.focus_panel == 1:
@@ -557,69 +609,65 @@ class CiefpPiconManagerMain(Screen):
         if not self.current_channel:
             self["status_label"].setText("Please select a channel")
             return
-
+        
         # Provjeri da li je marker
         service_ref = self.channel_refs.get(self.current_channel, "")
         if service_ref and (service_ref.startswith("#SERVICE 1:64:") or "1:64:" in service_ref):
             self["status_label"].setText("Cannot assign picon to marker")
             return
-
-        # Provjeri da li je picon_manager ažuriran sa trenutnom putanjom
+        
         if self.picon_manager.picon_path != self.picon_path:
             self.picon_manager.set_picon_path(self.picon_path)
-
+        
         from .screens.assign_picon import AssignPiconScreen
-        self.session.open(AssignPiconScreen, self.current_channel, self.channel_refs, self.picon_manager,
-                          self.assign_picon_callback)
+        self.session.open(AssignPiconScreen, self.current_channel, self.channel_refs, self.picon_manager, self.assign_picon_callback)
 
     def assign_picon_callback(self, result):
         if result:
             self.refresh_picon()
             self["status_label"].setText("Picon assigned")
-
+    
     def delete_picon(self):
         if not self.current_channel:
             self["status_label"].setText("Please select a channel")
             return
-
+        
         service_ref = self.channel_refs.get(self.current_channel, "")
         if not service_ref:
             self["status_label"].setText("No service reference")
             return
-
-        # Koristi PiconManager za brisanje
+        
         if self.picon_manager.delete_picon(service_ref):
             self.refresh_picon()
             self["status_label"].setText("Picon deleted")
         else:
             self["status_label"].setText("Picon does not exist")
-
+    
     def settings(self):
         from .screens.settings import PiconSettingsScreen
         self.session.open(PiconSettingsScreen, self.picon_path, self.settings_callback)
-
+    
     def settings_callback(self, path):
         if path:
             self.picon_path = path
             self.picon_manager.set_picon_path(path)
             self.refresh_picon()
             self["status_label"].setText(f"Path: {path}")
-
+    
     def show_menu(self):
-        """Prikaži meni za download picona"""
         from .screens.download_picons import DownloadPiconsScreen
         self.session.open(DownloadPiconsScreen)
-
+    
     def exit(self):
         self.close()
 
 
-# GLAVNA FUNKCIJA - OBAVEZNO MORA POSTOJATI
+# GLAVNA FUNKCIJA
 def main(session, **kwargs):
     session.open(CiefpPiconManagerMain)
 
 
-# PLUGIN DESCRIPTOR - OBAVEZNO MORA POSTOJATI
+# PLUGIN DESCRIPTOR
 def Plugins(**kwargs):
     return PluginDescriptor(
         name=f"{PLUGIN_NAME} v{PLUGIN_VERSION}",
