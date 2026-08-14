@@ -21,7 +21,7 @@ class DownloadPiconsScreen(Screen):
     <screen position="center,center" size="1920,1080" backgroundColor="#011a2e">
         <!-- Titule -->
         <widget name="separator0" position="0,5" size="1920,3" backgroundColor="#d5fa02" zPosition="1" />
-        <widget name="title" position="0,10" size="1920,60" font="Bold;34" halign="center" backgroundColor="#012e01" foregroundColor="#FFFFFF" text="..:: Download Picons (FLASH) OpenATV Feed ::.." />
+        <widget name="title" position="0,10" size="1920,60" font="Bold;34" halign="center" backgroundColor="#012e01" foregroundColor="#FFFFFF" text="..:: Download Picons (FLASH) ::.." />
         <widget name="separator1" position="0,78" size="1920,3" backgroundColor="#d5fa02" zPosition="1" />
         
         <!-- Status -->
