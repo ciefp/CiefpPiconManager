@@ -127,6 +127,116 @@ class PiconManager:
                         self.picon_name_cache[without_prefix_underscore.lower()] = full_path
         except Exception as e:
             print(f"Error indexing picons in {directory}: {e}")
+
+    def get_satellite_name_from_ref(self, service_ref):
+        """Vraća pravi naziv satelita (npr. 'Eutelsat 16A (16.0°E)') na osnovu reference."""
+        import xml.etree.ElementTree as ET
+        import re
+        import os
+
+        if not service_ref:
+            return None
+
+        ref = self.clean_service_ref(service_ref)
+        parts = ref.split(":")
+        if len(parts) < 2:
+            return None
+
+        try:
+            namespace = parts[1].zfill(8).upper()
+            ns_key = namespace[:4]
+
+            if ns_key.startswith("EEEE"):
+                return "Terrestrial"
+            elif ns_key.startswith("FFFF"):
+                return "Cable"
+
+            # Izračunaj poziciju u stepenima
+            ns_val = int(ns_key, 16)
+            if ns_val < 1800:
+                deg = ns_val / 10.0
+                pos_str = f"{deg:.1f}°E".replace(".0°E", "°E")
+            else:
+                deg = (3600 - ns_val) / 10.0
+                pos_str = f"{deg:.1f}°W".replace(".0°W", "°W")
+
+            # Pronađi pravo ime u satellites.xml
+            paths = ["/etc/tuxbox/satellites.xml", "/etc/enigma2/satellites.xml"]
+            xml_path = None
+            for path in paths:
+                if os.path.exists(path):
+                    xml_path = path
+                    break
+
+            if xml_path:
+                try:
+                    tree = ET.parse(xml_path)
+                    root = tree.getroot()
+                    for sat in root.findall('sat'):
+                        name = sat.get('name', '')
+                        position_raw = sat.get('position', '')
+                        if name and position_raw:
+                            pos_val = int(position_raw)
+                            if pos_val < 0:
+                                sat_deg = abs(pos_val) / 10.0
+                                sat_pos = f"{sat_deg:.1f}°W".replace(".0°W", "°W")
+                            else:
+                                if pos_val > 1800:
+                                    sat_deg = (3600 - pos_val) / 10.0
+                                    sat_pos = f"{sat_deg:.1f}°W".replace(".0°W", "°W")
+                                else:
+                                    sat_deg = pos_val / 10.0
+                                    sat_pos = f"{sat_deg:.1f}°E".replace(".0°E", "°E")
+
+                            if sat_pos == pos_str:
+                                clean_name = re.sub(r'\(\d+\)\s*', '', name)
+                                return f"{clean_name} ({pos_str})"
+                except Exception as e:
+                    print(f"[PiconManager] Error parsing satellites.xml: {e}")
+
+            # Ako nije nađen u XML, vrati bar poziciju
+            return pos_str
+        except Exception as e:
+            print(f"[PiconManager] Error getting satellite name: {e}")
+            return None
+
+    def get_provider_name(self, service_ref):
+        """Pronađi provajdera (p: oznaka) za datu referencu iz lamedb."""
+        if not service_ref:
+            return None
+        ref_clean = self.clean_service_ref(service_ref)
+        parts = ref_clean.split(":")
+        if len(parts) < 6:
+            return None
+
+        sid = parts[3].lower()
+        namespace = parts[1].lower()
+
+        try:
+            with open("/etc/enigma2/lamedb", "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            start_idx = content.find("\nservices\n")
+            end_idx = content.find("\nend\n", start_idx)
+            if start_idx == -1 or end_idx == -1:
+                return None
+
+            services_block = content[start_idx + 10:end_idx]
+            lines = services_block.splitlines()
+
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith(f"{sid}:{namespace}:"):
+                    for j in range(i + 1, min(i + 5, len(lines))):
+                        candidate = lines[j].strip()
+                        if candidate.startswith("p:"):
+                            return candidate[2:].split(",")[0]
+                        if candidate.startswith("c:") or (":" in candidate and not candidate.startswith("p:")):
+                            # Došli smo do sledećeg servisa, prekidamo
+                            break
+        except Exception as e:
+            print(f"[PiconManager] Error reading lamedb: {e}")
+        return None
     
     def set_picon_path(self, path):
         """Postavi putanju do picona"""
